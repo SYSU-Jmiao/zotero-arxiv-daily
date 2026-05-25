@@ -19,7 +19,8 @@ llm:
 
 source:
   arxiv:
-    category: ["cs.AI","cs.CV","cs.LG","cs.CL"]
+    category: ["cs.IT","cs.NI","cs.LG","cs.DC","eess.SP"]
+    keywords: ["Wireless Communication","Federated Learning","Edge Computing"]
 
 executor:
   debug: ${oc.env:DEBUG,null}

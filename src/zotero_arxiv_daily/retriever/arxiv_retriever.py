@@ -13,6 +13,7 @@ from time import sleep
 from typing import Any, Callable, TypeVar
 from loguru import logger
 import requests
+from datetime import datetime, timedelta, timezone
 
 T = TypeVar("T")
 
@@ -110,18 +111,19 @@ def _extract_text_from_tar_worker(source_url: str, paper_id: str, paper_title: s
 class ArxivRetriever(BaseRetriever):
     def __init__(self, config):
         super().__init__(config)
-        if self.config.source.arxiv.category is None:
-            raise ValueError("category must be specified for arxiv.")
+        has_category = self.config.source.arxiv.category is not None
+        has_keywords = self.config.source.arxiv.get("keywords") is not None
+        if not has_category and not has_keywords:
+            raise ValueError("At least one of 'category' or 'keywords' must be specified for arxiv.")
 
-    def _retrieve_raw_papers(self) -> list[ArxivResult]:
+    def _retrieve_raw_papers_by_category(self) -> list[ArxivResult]:
+        """Retrieve papers via the arxiv RSS feed for configured categories."""
         client = arxiv.Client(num_retries=10, delay_seconds=10)
         query = '+'.join(self.config.source.arxiv.category)
         include_cross_list = self.config.source.arxiv.get("include_cross_list", False)
-        # Get the latest paper from arxiv rss feed
         feed = feedparser.parse(f"https://rss.arxiv.org/atom/{query}")
         if 'Feed error for query' in feed.feed.title:
             raise Exception(f"Invalid ARXIV_QUERY: {query}.")
-        raw_papers = []
         allowed_announce_types = {"new", "cross"} if include_cross_list else {"new"}
         all_paper_ids = [
             i.id.removeprefix("oai:arXiv.org:")
@@ -131,8 +133,8 @@ class ArxivRetriever(BaseRetriever):
         if self.config.executor.debug:
             all_paper_ids = all_paper_ids[:10]
 
-        # Get full information of each paper from arxiv api
-        bar = tqdm(total=len(all_paper_ids))
+        raw_papers = []
+        bar = tqdm(total=len(all_paper_ids), desc="Fetching category papers")
         max_batch_retries = 5
         batch_retry_delay = 30
         for i in range(0, len(all_paper_ids), 20):
@@ -153,6 +155,56 @@ class ArxivRetriever(BaseRetriever):
             if i + 20 < len(all_paper_ids):
                 sleep(3)
         bar.close()
+        return raw_papers
+
+    def _retrieve_raw_papers_by_keywords(self) -> list[ArxivResult]:
+        """Retrieve recent papers via the arxiv API matching configured keywords."""
+        keywords = list(self.config.source.arxiv.keywords)
+        # Build OR query searching titles and abstracts for each keyword
+        parts = [f'(ti:"{kw}" OR abs:"{kw}")' for kw in keywords]
+        query = " OR ".join(parts)
+
+        # Search within the last 4 days to capture weekend/holiday gaps
+        cutoff = datetime.now(tz=timezone.utc) - timedelta(days=4)
+
+        client = arxiv.Client(num_retries=10, delay_seconds=10)
+        search = arxiv.Search(
+            query=query,
+            sort_by=arxiv.SortCriterion.SubmittedDate,
+            sort_order=arxiv.SortOrder.Descending,
+            max_results=500 if not self.config.executor.debug else 10,
+        )
+
+        raw_papers: list[ArxivResult] = []
+        logger.info(f"Searching arxiv for keywords: {keywords}")
+        for result in client.results(search):
+            published = result.published
+            if published.tzinfo is None:
+                published = published.replace(tzinfo=timezone.utc)
+            if published < cutoff:
+                break
+            raw_papers.append(result)
+
+        logger.info(f"Found {len(raw_papers)} papers via keyword search")
+        return raw_papers
+
+    def _retrieve_raw_papers(self) -> list[ArxivResult]:
+        seen_ids: set[str] = set()
+        raw_papers: list[ArxivResult] = []
+
+        if self.config.source.arxiv.category is not None:
+            for paper in self._retrieve_raw_papers_by_category():
+                paper_id = paper.entry_id
+                if paper_id not in seen_ids:
+                    seen_ids.add(paper_id)
+                    raw_papers.append(paper)
+
+        if self.config.source.arxiv.get("keywords") is not None:
+            for paper in self._retrieve_raw_papers_by_keywords():
+                paper_id = paper.entry_id
+                if paper_id not in seen_ids:
+                    seen_ids.add(paper_id)
+                    raw_papers.append(paper)
 
         return raw_papers
 
