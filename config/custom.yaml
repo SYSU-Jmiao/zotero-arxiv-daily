@@ -20,7 +20,7 @@ llm:
 source:
   arxiv:
     category: ["cs.IT","cs.NI","cs.LG","cs.DC","eess.SP"]
-    keywords: ["Wireless Communication","Federated Learning","Edge Computing"]
+    keywords: ["Wireless Communication"]
 
 executor:
   debug: ${oc.env:DEBUG,null}
