@@ -19,7 +19,7 @@ llm:
 
 source:
   arxiv:
-    category: ["cs.IT","cs.NI","cs.LG","cs.DC","eess.SP"]
+    category: ["eess.SP","eess.SY","cs.IT","cs.NI","cs.LG","cs.DC"]
     keywords: ["Wireless Communication"]
 
 executor:
